@@ -1,0 +1,973 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>#SuiteMakeAnime — ComfyUI Animatic & Heavy Render Pipeline</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <style>
+        :root {
+            --bg-canvas: #121215;
+            --bg-grid: #1c1c22;
+            --node-bg: #1b1b20;
+            --node-border: #2e2e38;
+        }
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--bg-canvas);
+            color: #e2e8f0;
+            overflow-x: hidden;
+            user-select: none;
+        }
+        .font-mono-code {
+            font-family: 'JetBrains Mono', monospace;
+        }
+        /* ComfyUI Dot Grid Background */
+        .comfy-grid {
+            background-color: #111114;
+            background-image: 
+                radial-gradient(#2a2a35 1.25px, transparent 1.25px),
+                radial-gradient(#1f1f27 1px, #111114 1px);
+            background-size: 28px 28px;
+            background-position: 0 0, 14px 14px;
+        }
+        /* Node Styling */
+        .comfy-node {
+            background: rgba(25, 25, 31, 0.96);
+            border: 1.5px solid #32323e;
+            box-shadow: 0 14px 35px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(255,255,255,0.03);
+            backdrop-filter: blur(8px);
+            transition: border-color 0.25s ease, box-shadow 0.25s ease, opacity 0.35s ease;
+        }
+        .comfy-node:hover {
+            border-color: #4b4b5e;
+        }
+        /* Socket Dots */
+        .socket {
+            width: 12px;
+            height: 12px;
+            border-radius: 9999px;
+            border: 2px solid #141418;
+            box-shadow: 0 0 8px currentColor;
+            flex-shrink: 0;
+        }
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #141418;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #333340;
+            border-radius: 3px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #4b4b5e;
+        }
+        /* Animated Noodles Flow */
+        @keyframes dashFlow {
+            to {
+                stroke-dashoffset: -24;
+            }
+        }
+        .noodle-active {
+            stroke-dasharray: 8 4;
+            animation: dashFlow 0.9s linear infinite;
+        }
+        /* 90s CRT Scanline overlay for GIF Preview */
+        .crt-scanlines {
+            background: linear-gradient(
+                rgba(18, 16, 16, 0) 50%, 
+                rgba(0, 0, 0, 0.35) 50%
+            ), linear-gradient(
+                90deg,
+                rgba(255, 0, 0, 0.04),
+                rgba(0, 255, 0, 0.02),
+                rgba(0, 0, 255, 0.04)
+            );
+            background-size: 100% 3px, 6px 100%;
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col">
+
+    <!-- TOP COMFYUI HEADER BAR -->
+    <header class="bg-[#18181d] border-b border-[#2b2b36] px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 z-30 sticky top-0">
+        <div class="flex items-center gap-3">
+            <div class="flex items-center gap-2 bg-[#23232c] border border-[#363645] px-3 py-1.5 rounded-lg">
+                <span class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                <span class="font-mono-code font-bold text-sm tracking-tight text-white">#SuiteMakeAnime</span>
+                <span class="text-[11px] font-mono-code bg-purple-500/20 text-purple-300 border border-purple-500/30 px-1.5 py-0.5 rounded">v1.4-AGENT</span>
+            </div>
+
+            <!-- Hardware / VRAM Telemetry -->
+            <div class="hidden md:flex items-center gap-4 text-xs font-mono-code text-slate-400 bg-[#131317] px-3 py-1.5 rounded-lg border border-[#262630]">
+                <div class="flex items-center gap-1.5">
+                    <i class="fa-solid fa-microchip text-cyan-400"></i>
+                    <span>VRAM: <strong id="vram-meter" class="text-slate-200">3.4 / 24.0 GB</strong></span>
+                </div>
+                <span class="text-slate-600">|</span>
+                <div class="flex items-center gap-1.5">
+                    <i class="fa-solid fa-bolt text-amber-400"></i>
+                    <span>MODE: <strong id="pipeline-mode" class="text-amber-300">FAST GIF PROXY</strong></span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Action Queue Buttons -->
+        <div class="flex items-center gap-2.5 flex-wrap">
+            <button id="btn-queue-gif" onclick="triggerGifGeneration()" class="flex items-center gap-2 bg-amber-500 hover:bg-amber-400 active:scale-95 text-slate-950 font-semibold text-xs px-3.5 py-2 rounded-lg shadow-lg shadow-amber-500/20 transition cursor-pointer">
+                <i class="fa-solid fa-film"></i>
+                <span>Queue GIF Preview (Fast Pass)</span>
+            </button>
+
+            <button id="btn-top-heavy" onclick="triggerHeavyRender()" disabled class="flex items-center gap-2 bg-[#262630] text-slate-500 border border-[#343442] font-semibold text-xs px-3.5 py-2 rounded-lg transition cursor-not-allowed">
+                <i class="fa-solid fa-lock" id="top-lock-icon"></i>
+                <span>Render Heavy Final Video (4K)</span>
+            </button>
+        </div>
+    </header>
+
+    <!-- MAIN WORKSPACE CONTAINER -->
+    <div class="flex-1 flex flex-col lg:flex-row relative">
+
+        <!-- NODE GRAPH CANVAS -->
+        <main id="node-canvas-area" class="flex-1 comfy-grid relative p-4 sm:p-6 lg:p-8 overflow-y-auto">
+            
+            <!-- SVG BEZIER NOODLES LAYER (Desktop Overlay) -->
+            <svg id="noodles-svg" class="hidden xl:block absolute inset-0 w-full h-full pointer-events-none z-10" style="min-height: 820px;">
+                <defs>
+                    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+                        <feGaussianBlur stdDeviation="3" result="blur" />
+                        <feComposite in="SourceGraphic" in2="blur" operator="over" />
+                    </filter>
+                </defs>
+                <!-- Path 1: Keyframes -> GIF Generator -->
+                <path id="noodle-1" d="M 415 220 C 485 220, 485 270, 545 270" fill="none" stroke="#38bdf8" stroke-width="3" filter="url(#glow)" />
+                <!-- Path 2: Style Compiler -> GIF Generator -->
+                <path id="noodle-2" d="M 415 620 C 485 620, 485 340, 545 340" fill="none" stroke="#c084fc" stroke-width="3" filter="url(#glow)" />
+                <!-- Path 3: Keyframes -> Heavy Engine (Bypass/Ref) -->
+                <path id="noodle-3" d="M 415 150 C 660 80, 780 120, 965 210" fill="none" stroke="#38bdf8" stroke-width="2" stroke-opacity="0.35" stroke-dasharray="6 6" />
+                <!-- Path 4: GIF Generator -> Heavy Engine -->
+                <path id="noodle-4" d="M 905 320 C 935 320, 935 320, 965 320" fill="none" stroke="#475569" stroke-width="3.5" />
+            </svg>
+
+            <!-- RESPONSIVE NODE GRID LAYOUT -->
+            <div class="relative z-20 grid grid-cols-1 xl:grid-cols-12 gap-6 max-w-[1600px] mx-auto items-start">
+
+                <!-- COLUMN 1: INPUT NODES (Keyframes + Style Compiler) -->
+                <div class="xl:col-span-4 flex flex-col gap-6">
+
+                    <!-- NODE 1: KEYFRAME SEQUENCE & DIRECTOR NOTES -->
+                    <section class="comfy-node rounded-xl overflow-hidden">
+                        <!-- Node Header -->
+                        <div class="bg-gradient-to-r from-sky-900/90 to-cyan-900/80 border-b border-sky-500/30 px-3.5 py-2 flex items-center justify-between">
+                            <div class="flex items-center gap-2">
+                                <span class="w-2.5 h-2.5 rounded-full bg-sky-400"></span>
+                                <h2 class="text-xs font-bold uppercase tracking-wider text-sky-100">01. Keyframe Sequence & Director Prompt</h2>
+                            </div>
+                            <span class="text-[10px] font-mono-code text-sky-300 bg-sky-950/80 px-2 py-0.5 rounded border border-sky-500/30">SEQ_NODE</span>
+                        </div>
+
+                        <!-- Node Body -->
+                        <div class="p-3.5 space-y-3" id="keyframes-container">
+                            
+                            <!-- KEYFRAME 01 -->
+                            <div class="bg-[#131318] border border-[#2a2a35] rounded-lg p-2.5 space-y-2 hover:border-sky-500/40 transition">
+                                <div class="flex items-center justify-between">
+                                    <span class="text-[11px] font-mono-code font-bold text-sky-400">KEYFRAME #01 • 0.0s → 1.5s</span>
+                                    <div class="flex items-center gap-1.5">
+                                        <span class="text-[10px] text-slate-400">Duração:</span>
+                                        <input type="text" value="1.5s" class="w-11 bg-[#1e1e26] border border-[#343442] rounded px-1.5 py-0.5 text-[11px] font-mono-code text-center text-sky-300">
+                                    </div>
+                                </div>
+                                <div class="flex gap-2.5">
+                                    <!-- Simulated Anime Thumbnail 01 -->
+                                    <div class="w-24 h-16 rounded-md overflow-hidden border border-slate-700 flex-shrink-0 relative bg-gradient-to-br from-slate-900 via-red-950 to-amber-900 flex flex-col justify-between p-1.5">
+                                        <div class="flex justify-between items-center">
+                                            <span class="w-2 h-2 rounded-full bg-cyan-400 animate-ping"></span>
+                                            <span class="text-[8px] font-mono-code text-red-400 bg-black/60 px-1 rounded">TRACK</span>
+                                        </div>
+                                        <div class="text-[8px] font-mono-code text-amber-300 leading-tight">COCKPIT HUD</div>
+                                    </div>
+                                    <!-- Action Description -->
+                                    <textarea rows="2" class="w-full bg-[#1a1a21] border border-[#2f2f3c] focus:border-sky-500 focus:outline-none rounded-md p-2 text-xs text-slate-200 leading-snug resize-none" placeholder="Descreva a ação deste frame...">Vista interna do cockpit do carro voador, radar vermelho piscando 'TRACK', fumaça e faíscas lá fora.</textarea>
+                                </div>
+                            </div>
+
+                            <!-- KEYFRAME 02 -->
+                            <div class="bg-[#131318] border border-[#2a2a35] rounded-lg p-2.5 space-y-2 hover:border-sky-500/40 transition">
+                                <div class="flex items-center justify-between">
+                                    <span class="text-[11px] font-mono-code font-bold text-sky-400">KEYFRAME #02 • 1.5s → 3.2s</span>
+                                    <div class="flex items-center gap-1.5">
+                                        <span class="text-[10px] text-slate-400">Duração:</span>
+                                        <input type="text" value="1.7s" class="w-11 bg-[#1e1e26] border border-[#343442] rounded px-1.5 py-0.5 text-[11px] font-mono-code text-center text-sky-300">
+                                    </div>
+                                </div>
+                                <div class="flex gap-2.5">
+                                    <!-- Simulated Anime Thumbnail 02 -->
+                                    <div class="w-24 h-16 rounded-md overflow-hidden border border-slate-700 flex-shrink-0 relative bg-gradient-to-t from-amber-700 via-slate-900 to-cyan-950 flex flex-col justify-between p-1.5">
+                                        <div class="w-full flex justify-center pt-1">
+                                            <span class="px-2 py-0.5 rounded-full bg-blue-500 shadow-[0_0_10px_#3b82f6] text-[7px] font-bold text-white">SPINNER</span>
+                                        </div>
+                                        <div class="text-[8px] font-mono-code text-amber-200 leading-tight">RUÍNAS EM CHAMAS</div>
+                                    </div>
+                                    <!-- Action Description -->
+                                    <textarea rows="2" class="w-full bg-[#1a1a21] border border-[#2f2f3c] focus:border-sky-500 focus:outline-none rounded-md p-2 text-xs text-slate-200 leading-snug resize-none" placeholder="Descreva a ação deste frame...">Corte para vista externa: carro voador rasga o céu noturno com flare azul/vermelho sobre ruínas em chamas.</textarea>
+                                </div>
+                            </div>
+
+                            <!-- KEYFRAME 03 -->
+                            <div class="bg-[#131318] border border-[#2a2a35] rounded-lg p-2.5 space-y-2 hover:border-sky-500/40 transition">
+                                <div class="flex items-center justify-between">
+                                    <span class="text-[11px] font-mono-code font-bold text-sky-400">KEYFRAME #03 • 3.2s → 5.0s</span>
+                                    <div class="flex items-center gap-1.5">
+                                        <span class="text-[10px] text-slate-400">Duração:</span>
+                                        <input type="text" value="1.8s" class="w-11 bg-[#1e1e26] border border-[#343442] rounded px-1.5 py-0.5 text-[11px] font-mono-code text-center text-sky-300">
+                                    </div>
+                                </div>
+                                <div class="flex gap-2.5">
+                                    <!-- Simulated Anime Thumbnail 03 -->
+                                    <div class="w-24 h-16 rounded-md overflow-hidden border border-slate-700 flex-shrink-0 relative bg-gradient-to-tr from-slate-950 via-cyan-900 to-orange-700 flex flex-col justify-between p-1.5">
+                                        <div class="text-[8px] font-mono-code text-cyan-200">MEGA-WALL</div>
+                                        <div class="text-[8px] font-mono-code text-orange-200 leading-tight">ZONA SEGURA</div>
+                                    </div>
+                                    <!-- Action Description -->
+                                    <textarea rows="2" class="w-full bg-[#1a1a21] border border-[#2f2f3c] focus:border-sky-500 focus:outline-none rounded-md p-2 text-xs text-slate-200 leading-snug resize-none" placeholder="Descreva a ação deste frame...">Nave mergulha em direção aos portões monumentais da Zona Segura encravada na montanha.</textarea>
+                                </div>
+                            </div>
+
+                            <!-- Add Keyframe + Output Sockets -->
+                            <div class="pt-1 flex items-center justify-between">
+                                <button onclick="addMockKeyframe()" class="text-xs font-medium text-sky-300 hover:text-sky-200 bg-sky-500/10 hover:bg-sky-500/20 border border-sky-500/30 px-3 py-1.5 rounded-lg transition flex items-center gap-1.5 cursor-pointer">
+                                    <i class="fa-solid fa-plus"></i> Add Keyframe
+                                </button>
+
+                                <div class="flex items-center gap-2">
+                                    <span class="text-[11px] font-mono-code text-slate-400">LATENT_SEQ_OUT</span>
+                                    <span class="socket bg-sky-400 text-sky-400"></span>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- NODE 2: 90s ANIME STYLE & AUDIO/MOOD COMPILER -->
+                    <section class="comfy-node rounded-xl overflow-hidden">
+                        <div class="bg-gradient-to-r from-purple-900/90 to-fuchsia-900/80 border-b border-purple-500/30 px-3.5 py-2 flex items-center justify-between">
+                            <div class="flex items-center gap-2">
+                                <span class="w-2.5 h-2.5 rounded-full bg-purple-400"></span>
+                                <h2 class="text-xs font-bold uppercase tracking-wider text-purple-100">02. 90s Anime Style & Mood Compiler</h2>
+                            </div>
+                            <span class="text-[10px] font-mono-code text-purple-300 bg-purple-950/80 px-2 py-0.5 rounded border border-purple-500/30">STYLE_DNA</span>
+                        </div>
+
+                        <div class="p-3.5 space-y-3">
+                            <div>
+                                <label class="block text-[11px] font-mono-code text-slate-400 mb-1">GLOBAL VISUAL TOKENS (LOCKED)</label>
+                                <div class="bg-[#131318] border border-[#2a2a35] rounded-lg p-2.5 text-xs font-mono-code text-purple-200 leading-relaxed">
+                                    90s shonen anime opening still, Blade Runner 2099 cyberpunk atmosphere, retro cel shading, anamorphic lens flare, 1995 anime film grain, sharp shadows, dramatic camera angle
+                                </div>
+                            </div>
+
+                            <div class="grid grid-cols-2 gap-2.5">
+                                <div>
+                                    <label class="block text-[10px] font-mono-code text-slate-400 mb-1">TRILHA / ÁUDIO</label>
+                                    <select class="w-full bg-[#1a1a21] border border-[#2f2f3c] rounded-lg px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-purple-400">
+                                        <option>Cyberpunk Suspense Synth (Sem Diálogo)</option>
+                                        <option>90s OVA Dark Ambient</option>
+                                        <option>Mute / Visual Only</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="block text-[10px] font-mono-code text-slate-400 mb-1">MOTION INTENSITY</label>
+                                    <div class="bg-[#1a1a21] border border-[#2f2f3c] rounded-lg px-2.5 py-1.5 flex items-center justify-between text-xs font-mono-code">
+                                        <span class="text-purple-300">0.78</span>
+                                        <span class="text-[10px] text-slate-500">CINEMATIC</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="pt-1 flex items-center justify-end gap-2">
+                                <span class="text-[11px] font-mono-code text-slate-400">CONDITIONING_OUT</span>
+                                <span class="socket bg-purple-400 text-purple-400"></span>
+                            </div>
+                        </div>
+                    </section>
+                </div>
+
+                <!-- COLUMN 2: NODE 3 — LIGHTWEIGHT ANIMATIC GIF GENERATOR (FAST PASS) -->
+                <div class="xl:col-span-4 flex flex-col gap-6">
+                    <section class="comfy-node rounded-xl overflow-hidden border-amber-500/40 shadow-[0_0_30px_rgba(245,158,11,0.08)]">
+                        <!-- Header -->
+                        <div class="bg-gradient-to-r from-amber-900/90 to-orange-900/80 border-b border-amber-500/30 px-3.5 py-2 flex items-center justify-between">
+                            <div class="flex items-center gap-2">
+                                <span class="w-2.5 h-2.5 rounded-full bg-amber-400"></span>
+                                <h2 class="text-xs font-bold uppercase tracking-wider text-amber-100">03. Animatic GIF Generator (Fast Pass)</h2>
+                            </div>
+                            <span class="text-[10px] font-mono-code text-amber-300 bg-amber-950/90 px-2 py-0.5 rounded border border-amber-500/40">LOW VRAM</span>
+                        </div>
+
+                        <!-- Input Sockets Row -->
+                        <div class="bg-[#141419] px-3.5 py-2 border-b border-[#262630] flex items-center justify-between text-[11px] font-mono-code text-slate-400">
+                            <div class="flex items-center gap-3">
+                                <div class="flex items-center gap-1.5">
+                                    <span class="socket bg-sky-400 text-sky-400"></span>
+                                    <span>SEQ</span>
+                                </div>
+                                <div class="flex items-center gap-1.5">
+                                    <span class="socket bg-purple-400 text-purple-400"></span>
+                                    <span>STYLE</span>
+                                </div>
+                            </div>
+                            <span class="text-amber-400/90">480p • 12fps • ~4.2s</span>
+                        </div>
+
+                        <!-- GIF VIEWPORT PREVIEW -->
+                        <div class="p-3.5 space-y-3">
+                            <div class="relative rounded-lg overflow-hidden border border-[#343442] bg-black aspect-video group">
+                                <!-- Canvas for Dynamic Anime Animatic Simulation -->
+                                <canvas id="animatic-canvas" class="w-full h-full block"></canvas>
+                                
+                                <!-- CRT 1995 Scanlines Overlay -->
+                                <div class="crt-scanlines absolute inset-0 pointer-events-none"></div>
+
+                                <!-- Top HUD Badges inside GIF Player -->
+                                <div class="absolute top-2.5 left-2.5 right-2.5 flex items-center justify-between pointer-events-none">
+                                    <span class="bg-black/75 backdrop-blur-md border border-amber-500/40 text-amber-300 font-mono-code text-[10px] font-bold px-2 py-0.5 rounded flex items-center gap-1.5">
+                                        <span class="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping"></span>
+                                        GIF PROXY PREVIEW
+                                    </span>
+                                    <span id="gif-frame-counter" class="bg-black/75 backdrop-blur-md text-slate-300 font-mono-code text-[10px] px-2 py-0.5 rounded border border-white/10">
+                                        KF 01 / 03
+                                    </span>
+                                </div>
+
+                                <!-- Bottom Director Subtitle Overlay inside GIF -->
+                                <div class="absolute bottom-2.5 left-2.5 right-2.5 bg-black/80 backdrop-blur-sm border border-white/10 px-2.5 py-1.5 rounded text-center pointer-events-none">
+                                    <p id="gif-caption" class="text-[11px] font-mono-code text-cyan-200 truncate">
+                                        [KF01] Vista interna do cockpit — Radar TRACK ativo...
+                                    </p>
+                                </div>
+
+                                <!-- Loading Overlay when Regenerating GIF -->
+                                <div id="gif-loading-overlay" class="hidden absolute inset-0 bg-slate-950/90 backdrop-blur-sm flex flex-col items-center justify-center gap-2 z-20">
+                                    <i class="fa-solid fa-circle-notch fa-spin text-2xl text-amber-400"></i>
+                                    <span class="text-xs font-mono-code text-amber-300">Compilando Keyframes em GIF...</span>
+                                    <div class="w-40 h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                                        <div id="gif-progress-bar" class="h-full bg-amber-400 w-0 transition-all duration-150"></div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Scrubber & Playback Controls -->
+                            <div class="bg-[#131318] border border-[#2a2a35] rounded-lg p-2.5 space-y-2">
+                                <div class="flex items-center justify-between gap-2">
+                                    <button onclick="toggleGifPlay()" id="btn-play-pause" class="w-7 h-7 rounded bg-[#23232e] hover:bg-[#2e2e3d] text-slate-200 flex items-center justify-center text-xs cursor-pointer">
+                                        <i class="fa-solid fa-pause" id="icon-play-pause"></i>
+                                    </button>
+                                    <input id="gif-scrubber" type="range" min="0" max="100" value="0" oninput="scrubGif(this.value)" class="flex-1 accent-amber-400 h-1.5 bg-slate-700 rounded-lg cursor-pointer">
+                                    <button onclick="triggerGifGeneration()" title="Regerar GIF" class="px-2 py-1 rounded bg-[#23232e] hover:bg-[#2e2e3d] text-[11px] font-mono-code text-amber-300 cursor-pointer">
+                                        <i class="fa-solid fa-rotate-right mr-1"></i>Regerar
+                                    </button>
+                                </div>
+                            </div>
+
+                            <!-- GATEKEEPER APPROVAL BOX -->
+                            <div class="bg-gradient-to-r from-emerald-950/40 to-teal-950/40 border border-emerald-500/30 rounded-lg p-3 space-y-2.5">
+                                <div class="flex items-start justify-between gap-2">
+                                    <div>
+                                        <h3 class="text-xs font-bold text-emerald-300 flex items-center gap-1.5">
+                                            <i class="fa-solid fa-shield-check"></i> Checkpoint de Direção
+                                        </h3>
+                                        <p class="text-[11px] text-slate-400 mt-0.5 leading-snug">
+                                            Valide o timing e continuidade no GIF antes de liberar a GPU para o vídeo pesado.
+                                        </p>
+                                    </div>
+                                </div>
+
+                                <button id="btn-approve-gif" onclick="toggleApproveAnimatic()" class="w-full py-2 px-3 rounded-lg font-bold text-xs flex items-center justify-center gap-2 transition cursor-pointer bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/50">
+                                    <i class="fa-regular fa-square-check" id="approve-icon"></i>
+                                    <span id="approve-text">APROVAR ANIMATIC & LIBERAR RENDER PESADO</span>
+                                </button>
+                            </div>
+
+                            <!-- Output Socket -->
+                            <div class="flex items-center justify-end gap-2 pt-0.5">
+                                <span class="text-[11px] font-mono-code text-slate-400">APPROVED_ANIMATIC_OUT</span>
+                                <span id="socket-gif-out" class="socket bg-slate-500 text-slate-500 transition-colors"></span>
+                            </div>
+                        </div>
+                    </section>
+                </div>
+
+                <!-- COLUMN 3: NODE 4 — HEAVY VIDEO UPSCALER & INTERPOLATION ENGINE -->
+                <div class="xl:col-span-4 flex flex-col gap-6">
+                    <section id="heavy-node" class="comfy-node rounded-xl overflow-hidden opacity-55">
+                        <!-- Header -->
+                        <div class="bg-gradient-to-r from-rose-950/90 to-red-900/80 border-b border-rose-500/30 px-3.5 py-2 flex items-center justify-between">
+                            <div class="flex items-center gap-2">
+                                <span id="heavy-status-dot" class="w-2.5 h-2.5 rounded-full bg-slate-500"></span>
+                                <h2 class="text-xs font-bold uppercase tracking-wider text-rose-100">04. Heavy Video Engine (Final Pass)</h2>
+                            </div>
+                            <span id="heavy-lock-badge" class="text-[10px] font-mono-code text-rose-300 bg-rose-950/90 px-2 py-0.5 rounded border border-rose-500/40">
+                                <i class="fa-solid fa-lock mr-1"></i>LOCKED
+                            </span>
+                        </div>
+
+                        <!-- Input Socket -->
+                        <div class="bg-[#141419] px-3.5 py-2 border-b border-[#262630] flex items-center justify-between text-[11px] font-mono-code text-slate-400">
+                            <div class="flex items-center gap-1.5">
+                                <span id="socket-heavy-in" class="socket bg-slate-500 text-slate-500"></span>
+                                <span>ANIMATIC_IN</span>
+                            </div>
+                            <span class="text-rose-400">EST. VRAM: 21.8 GB</span>
+                        </div>
+
+                        <!-- Heavy Pipeline Sub-modules -->
+                        <div class="p-3.5 space-y-3">
+                            
+                            <div class="space-y-2">
+                                <!-- Sub-node A -->
+                                <div class="bg-[#131318] border border-[#2a2a35] rounded-lg p-2.5 flex items-center justify-between">
+                                    <div class="flex items-center gap-2.5">
+                                        <div class="w-7 h-7 rounded bg-rose-500/15 border border-rose-500/30 flex items-center justify-center text-rose-400 text-xs">
+                                            <i class="fa-solid fa-wand-magic-sparkles"></i>
+                                        </div>
+                                        <div>
+                                            <div class="text-xs font-semibold text-slate-200">AnimateDiff / Video Diffusion</div>
+                                            <div class="text-[10px] font-mono-code text-slate-400">Denoise 0.45 • Temporal Consistency</div>
+                                        </div>
+                                    </div>
+                                    <span class="text-[10px] font-mono-code text-emerald-400 bg-emerald-950/60 px-1.5 py-0.5 rounded border border-emerald-500/20">READY</span>
+                                </div>
+
+                                <!-- Sub-node B -->
+                                <div class="bg-[#131318] border border-[#2a2a35] rounded-lg p-2.5 flex items-center justify-between">
+                                    <div class="flex items-center gap-2.5">
+                                        <div class="w-7 h-7 rounded bg-cyan-500/15 border border-cyan-500/30 flex items-center justify-center text-cyan-400 text-xs">
+                                            <i class="fa-solid fa-gauge-high"></i>
+                                        </div>
+                                        <div>
+                                            <div class="text-xs font-semibold text-slate-200">RIFE v4.15 Frame Interpolation</div>
+                                            <div class="text-[10px] font-mono-code text-slate-400">12fps → 24fps / 60fps Anime Smooth</div>
+                                        </div>
+                                    </div>
+                                    <span class="text-[10px] font-mono-code text-cyan-300 bg-cyan-950/60 px-1.5 py-0.5 rounded border border-cyan-500/20">2X/5X</span>
+                                </div>
+
+                                <!-- Sub-node C -->
+                                <div class="bg-[#131318] border border-[#2a2a35] rounded-lg p-2.5 flex items-center justify-between">
+                                    <div class="flex items-center gap-2.5">
+                                        <div class="w-7 h-7 rounded bg-purple-500/15 border border-purple-500/30 flex items-center justify-center text-purple-400 text-xs">
+                                            <i class="fa-solid fa-expand"></i>
+                                        </div>
+                                        <div>
+                                            <div class="text-xs font-semibold text-slate-200">RealESRGAN_AnimeVideo_x4</div>
+                                            <div class="text-[10px] font-mono-code text-slate-400">4K Cinema • 1995 Film Grain Pass</div>
+                                        </div>
+                                    </div>
+                                    <span class="text-[10px] font-mono-code text-purple-300 bg-purple-950/60 px-1.5 py-0.5 rounded border border-purple-500/20">3840x2160</span>
+                                </div>
+                            </div>
+
+                            <!-- Render Output Settings -->
+                            <div class="grid grid-cols-2 gap-2 pt-1">
+                                <div class="bg-[#131318] border border-[#2a2a35] rounded-lg px-2.5 py-1.5">
+                                    <span class="block text-[9px] font-mono-code text-slate-500">CODEC / CONTAINER</span>
+                                    <span class="text-xs font-mono-code text-slate-200">MP4 (H.265 10-bit)</span>
+                                </div>
+                                <div class="bg-[#131318] border border-[#2a2a35] rounded-lg px-2.5 py-1.5">
+                                    <span class="block text-[9px] font-mono-code text-slate-500">AUDIO MUX</span>
+                                    <span class="text-xs font-mono-code text-amber-300">Synth_Suspense.wav</span>
+                                </div>
+                            </div>
+
+                            <!-- Progress Bar (Visible during Heavy Render) -->
+                            <div id="heavy-progress-box" class="hidden bg-[#131318] border border-rose-500/40 rounded-lg p-2.5 space-y-1.5">
+                                <div class="flex justify-between text-[11px] font-mono-code">
+                                    <span id="heavy-stage-label" class="text-rose-300">Alocando Tensores 4K...</span>
+                                    <span id="heavy-percent" class="text-white font-bold">0%</span>
+                                </div>
+                                <div class="w-full h-2 bg-slate-800 rounded-full overflow-hidden">
+                                    <div id="heavy-progress-bar" class="h-full bg-gradient-to-r from-rose-500 via-amber-400 to-emerald-400 w-0 transition-all duration-200"></div>
+                                </div>
+                            </div>
+
+                            <!-- Final Render Action Button -->
+                            <button id="btn-node-heavy" onclick="triggerHeavyRender()" disabled class="w-full py-2.5 px-4 rounded-lg font-bold text-xs tracking-wide flex items-center justify-center gap-2 transition bg-[#24242e] text-slate-500 border border-[#323240] cursor-not-allowed">
+                                <i class="fa-solid fa-film"></i>
+                                <span>RENDER FINAL HEAVY VIDEO (.MP4)</span>
+                            </button>
+
+                        </div>
+                    </section>
+                </div>
+
+            </div>
+        </main>
+
+        <!-- RIGHT / BOTTOM AGENT TELEMETRY & LOG CONSOLE -->
+        <aside class="w-full lg:w-80 xl:w-96 bg-[#15151a] border-t lg:border-t-0 lg:border-l border-[#2b2b36] flex flex-col z-20">
+            <div class="px-4 py-3 border-b border-[#2b2b36] flex items-center justify-between bg-[#191920]">
+                <div class="flex items-center gap-2">
+                    <i class="fa-solid fa-terminal text-emerald-400 text-xs"></i>
+                    <span class="text-xs font-mono-code font-bold text-slate-200">AGENT ORCHESTRATOR LOG</span>
+                </div>
+                <span class="text-[10px] font-mono-code text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 px-2 py-0.5 rounded">ONLINE</span>
+            </div>
+
+            <!-- Live Logs Feed -->
+            <div id="agent-logs" class="flex-1 p-3.5 font-mono-code text-[11px] space-y-2 overflow-y-auto max-h-64 lg:max-h-none leading-relaxed">
+                <div class="text-slate-500">[04:08:12] <span class="text-purple-400">[Agent]</span> #SuiteMakeAnime graph initialized.</div>
+                <div class="text-slate-500">[04:08:13] <span class="text-sky-400">[Parser]</span> 3 Keyframes carregados com descrições de direção.</div>
+                <div class="text-slate-500">[04:08:14] <span class="text-amber-400">[FastPass]</span> GIF Animatic proxy gerado em 480p (3.4GB VRAM).</div>
+                <div class="text-slate-400">[04:08:15] <span class="text-emerald-400">[Guard]</span> Heavy Video Engine bloqueado até aprovação visual do GIF.</div>
+            </div>
+
+            <!-- Agent Architecture Summary Card -->
+            <div class="p-3.5 border-t border-[#2b2b36] bg-[#121216] space-y-2">
+                <div class="text-[10px] font-mono-code uppercase tracking-wider text-slate-400 font-bold">Pipeline Token & GPU Saver</div>
+                <div class="grid grid-cols-2 gap-2 text-[11px] font-mono-code">
+                    <div class="bg-[#1a1a22] p-2 rounded border border-[#292934]">
+                        <span class="text-slate-500 block text-[9px]">GIF PROXY COST</span>
+                        <span class="text-emerald-400 font-bold">~12 seg / 3.4GB</span>
+                    </div>
+                    <div class="bg-[#1a1a22] p-2 rounded border border-[#292934]">
+                        <span class="text-slate-500 block text-[9px]">4K HEAVY COST</span>
+                        <span class="text-rose-400 font-bold">~3.5 min / 21.8GB</span>
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+    </div>
+
+    <!-- TOAST NOTIFICATION BOX (NO ALERT()) -->
+    <div id="toast-box" class="fixed bottom-5 left-1/2 -translate-x-1/2 z-50 pointer-events-none opacity-0 transition-all duration-300 transform translate-y-3">
+        <div class="bg-[#1e1e26] border border-emerald-500/50 text-slate-100 px-4 py-2.5 rounded-xl shadow-2xl flex items-center gap-2.5 text-xs font-mono-code">
+            <i id="toast-icon" class="fa-solid fa-circle-check text-emerald-400"></i>
+            <span id="toast-msg">Ação concluída!</span>
+        </div>
+    </div>
+
+    <script>
+        // State Management
+        let isPlaying = true;
+        let isApproved = false;
+        let animProgress = 0; // 0 to 100
+        let keyframeCount = 3;
+
+        const canvas = document.getElementById('animatic-canvas');
+        const ctx = canvas.getContext('2d');
+        const scrubber = document.getElementById('gif-scrubber');
+        const frameCounter = document.getElementById('gif-frame-counter');
+        const captionEl = document.getElementById('gif-caption');
+
+        const captions = [
+            "[KF01] Vista interna do cockpit — Radar TRACK ativo, faíscas no vidro...",
+            "[KF02] Corte externo: Spinner rasga o céu sobre a cidade em chamas...",
+            "[KF03] Aproximação final: Entrando nos portões da Zona Segura..."
+        ];
+
+        // Resize Canvas cleanly
+        function resizeCanvas() {
+            const rect = canvas.parentElement.getBoundingClientRect();
+            canvas.width = rect.width || 480;
+            canvas.height = rect.height || 270;
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        // Append Log to Agent Console
+        function addLog(tag, colorClass, message) {
+            const logs = document.getElementById('agent-logs');
+            const now = new Date();
+            const timeStr = now.toTimeString().split(' ')[0];
+            const div = document.createElement('div');
+            div.className = 'text-slate-400';
+            div.innerHTML = `<span class="text-slate-600">[${timeStr}]</span> <span class="${colorClass}">[${tag}]</span> ${message}`;
+            logs.appendChild(div);
+            logs.scrollTop = logs.scrollHeight;
+        }
+
+        // Custom Toast Notification
+        function showToast(msg, iconClass = "fa-solid fa-circle-check text-emerald-400") {
+            const box = document.getElementById('toast-box');
+            document.getElementById('toast-msg').textContent = msg;
+            document.getElementById('toast-icon').className = iconClass;
+            box.classList.remove('opacity-0', 'translate-y-3');
+            setTimeout(() => {
+                box.classList.add('opacity-0', 'translate-y-3');
+            }, 3200);
+        }
+
+        // Draw Simulated 90s Cyberpunk Anime Frames on Canvas
+        function renderAnimaticFrame(progress) {
+            const w = canvas.width;
+            const h = canvas.height;
+            ctx.clearRect(0, 0, w, h);
+
+            // Determine current keyframe (0, 1, or 2)
+            let kfIndex = 0;
+            let localT = 0;
+            if (progress < 34) {
+                kfIndex = 0;
+                localT = progress / 34;
+            } else if (progress < 68) {
+                kfIndex = 1;
+                localT = (progress - 34) / 34;
+            } else {
+                kfIndex = 2;
+                localT = (progress - 68) / 32;
+            }
+
+            frameCounter.textContent = `KF 0${kfIndex + 1} / 0${keyframeCount}`;
+            captionEl.textContent = captions[kfIndex] || captions[2];
+
+            // Cinema Letterbox bars
+            const barH = h * 0.11;
+
+            if (kfIndex === 0) {
+                // SCENE 1: Cockpit Interior + Fire Outside + Blinking Red TRACK Radar
+                const grad = ctx.createLinearGradient(0, 0, 0, h);
+                grad.addColorStop(0, '#0f172a');
+                grad.addColorStop(0.5, '#7c2d12');
+                grad.addColorStop(1, '#09090b');
+                ctx.fillStyle = grad;
+                ctx.fillRect(0, 0, w, h);
+
+                // Explosion glow outside windshield
+                const fireX = w * 0.38 + Math.sin(localT * 10) * 6;
+                const fireY = h * 0.45;
+                const fireGrad = ctx.createRadialGradient(fireX, fireY, 4, fireX, fireY, w * 0.25);
+                fireGrad.addColorStop(0, 'rgba(254, 240, 138, 0.95)');
+                fireGrad.addColorStop(0.4, 'rgba(249, 115, 22, 0.75)');
+                fireGrad.addColorStop(1, 'rgba(249, 115, 22, 0)');
+                ctx.fillStyle = fireGrad;
+                ctx.fillRect(0, 0, w, h);
+
+                // Cockpit Frame Silhouette
+                ctx.fillStyle = '#09090d';
+                ctx.beginPath();
+                ctx.moveTo(0, h);
+                ctx.lineTo(0, h * 0.55);
+                ctx.lineTo(w * 0.22, h * 0.22);
+                ctx.lineTo(w * 0.78, h * 0.22);
+                ctx.lineTo(w, h * 0.55);
+                ctx.lineTo(w, h);
+                ctx.fill();
+
+                // Left Red TRACK Monitor
+                ctx.fillStyle = '#18181f';
+                ctx.strokeStyle = '#3f3f46';
+                ctx.lineWidth = 2;
+                ctx.fillRect(w * 0.14, h * 0.52, w * 0.26, h * 0.34);
+                ctx.strokeRect(w * 0.14, h * 0.52, w * 0.26, h * 0.34);
+
+                ctx.fillStyle = Math.floor(localT * 12) % 2 === 0 ? '#ef4444' : '#991b1b';
+                ctx.fillRect(w * 0.28, h * 0.55, w * 0.10, h * 0.28);
+                ctx.fillStyle = '#ffffff';
+                ctx.font = 'bold 10px JetBrains Mono';
+                ctx.fillText('TRACK', w * 0.29, h * 0.70);
+
+                // Right Cyan Telemetry Screen
+                ctx.fillStyle = '#082f49';
+                ctx.fillRect(w * 0.56, h * 0.56, w * 0.16, h * 0.30);
+                ctx.fillStyle = '#38bdf8';
+                for (let i = 0; i < 5; i++) {
+                    ctx.fillRect(w * 0.58, h * (0.60 + i * 0.04), w * (0.06 + ((i + Math.floor(localT * 5)) % 3) * 0.02), 3);
+                }
+
+            } else if (kfIndex === 1) {
+                // SCENE 2: Exterior Flying Spinner Over Burning Ruined City
+                const skyGrad = ctx.createLinearGradient(0, 0, 0, h);
+                skyGrad.addColorStop(0, '#090d16');
+                skyGrad.addColorStop(0.55, '#1e293b');
+                skyGrad.addColorStop(1, '#9a3412');
+                ctx.fillStyle = skyGrad;
+                ctx.fillRect(0, 0, w, h);
+
+                // Smoke plumes
+                ctx.fillStyle = 'rgba(148, 163, 184, 0.22)';
+                for (let i = 0; i < 5; i++) {
+                    ctx.beginPath();
+                    ctx.arc(w * (0.25 + i * 0.14) - localT * 15, h * 0.42 - (i % 2) * 14, 28 + i * 5, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                // Burning City Silhouettes
+                ctx.fillStyle = '#0c0a09';
+                const buildings = [0.05, 0.18, 0.32, 0.48, 0.62, 0.78];
+                buildings.forEach((bx, idx) => {
+                    const bh = h * (0.28 + (idx % 3) * 0.08);
+                    ctx.fillRect(w * bx, h - bh - barH, w * 0.14, bh);
+                    // Glowing orange windows
+                    ctx.fillStyle = '#f97316';
+                    ctx.fillRect(w * (bx + 0.03), h - bh - barH + 12, 8, 12);
+                    ctx.fillStyle = '#0c0a09';
+                });
+
+                // Flying Car (Spinner) with Anamorphic Flare
+                const carX = w * (0.35 + localT * 0.28);
+                const carY = h * (0.30 - localT * 0.04);
+
+                // Blue & Red Anamorphic Lens Flare
+                const flareGrad = ctx.createLinearGradient(carX - 70, carY, carX + 70, carY);
+                flareGrad.addColorStop(0, 'rgba(56, 189, 248, 0)');
+                flareGrad.addColorStop(0.35, 'rgba(56, 189, 248, 0.95)');
+                flareGrad.addColorStop(0.65, 'rgba(244, 63, 94, 0.95)');
+                flareGrad.addColorStop(1, 'rgba(244, 63, 94, 0)');
+                ctx.fillStyle = flareGrad;
+                ctx.fillRect(carX - 75, carY - 2, 150, 4);
+
+                ctx.fillStyle = '#e2e8f0';
+                ctx.fillRect(carX - 12, carY - 4, 24, 7);
+
+            } else {
+                // SCENE 3: Monumental Safe Zone Megastructure Wall
+                const wallSky = ctx.createLinearGradient(0, 0, w, h);
+                wallSky.addColorStop(0, '#0f172a');
+                wallSky.addColorStop(0.5, '#1e3a5f');
+                wallSky.addColorStop(1, '#c2410c');
+                ctx.fillStyle = wallSky;
+                ctx.fillRect(0, 0, w, h);
+
+                // Mega Wall Diagonal Structure (Zooming in slightly with localT)
+                ctx.save();
+                const scale = 1 + localT * 0.08;
+                ctx.translate(w / 2, h / 2);
+                ctx.scale(scale, scale);
+                ctx.translate(-w / 2, -h / 2);
+
+                ctx.fillStyle = '#1e293b';
+                ctx.strokeStyle = '#38bdf8';
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+                ctx.moveTo(0, h * 0.18);
+                ctx.lineTo(w, h * 0.34);
+                ctx.lineTo(w, h * 0.85);
+                ctx.lineTo(0, h * 0.85);
+                ctx.closePath();
+                ctx.fill();
+                ctx.stroke();
+
+                // Giant Arches in the Dam/Wall
+                for (let a = 0; a < 3; a++) {
+                    const ax = w * (0.18 + a * 0.30);
+                    const ay = h * (0.48 + a * 0.05);
+                    ctx.fillStyle = '#090d16';
+                    ctx.beginPath();
+                    ctx.arc(ax, ay, 26, Math.PI, 0);
+                    ctx.lineTo(ax + 26, h * 0.85);
+                    ctx.lineTo(ax - 26, h * 0.85);
+                    ctx.fill();
+
+                    // Warm Safe Zone Lights inside arch
+                    ctx.fillStyle = '#fb923c';
+                    ctx.fillRect(ax - 6, ay + 12, 12, 8);
+                }
+                ctx.restore();
+            }
+
+            // 90s Anime Cinema Letterbox Bars
+            ctx.fillStyle = '#050507';
+            ctx.fillRect(0, 0, w, barH);
+            ctx.fillRect(0, h - barH, w, barH);
+        }
+
+        // Animation Loop (12fps feel for GIF Proxy)
+        let lastFrameTime = 0;
+        function animateLoop(timestamp) {
+            if (isPlaying && timestamp - lastFrameTime > 80) {
+                animProgress = (animProgress + 1.6) % 100;
+                scrubber.value = Math.floor(animProgress);
+                renderAnimaticFrame(animProgress);
+                lastFrameTime = timestamp;
+            }
+            requestAnimationFrame(animateLoop);
+        }
+        requestAnimationFrame(animateLoop);
+
+        function toggleGifPlay() {
+            isPlaying = !isPlaying;
+            document.getElementById('icon-play-pause').className = isPlaying ? 'fa-solid fa-pause' : 'fa-solid fa-play';
+        }
+
+        function scrubGif(val) {
+            isPlaying = false;
+            document.getElementById('icon-play-pause').className = 'fa-solid fa-play';
+            animProgress = parseFloat(val);
+            renderAnimaticFrame(animProgress);
+        }
+
+        // Simulate Regenerating Fast-Pass GIF
+        function triggerGifGeneration() {
+            const overlay = document.getElementById('gif-loading-overlay');
+            const bar = document.getElementById('gif-progress-bar');
+            const noodle1 = document.getElementById('noodle-1');
+            const noodle2 = document.getElementById('noodle-2');
+
+            overlay.classList.remove('hidden');
+            noodle1.classList.add('noodle-active');
+            noodle2.classList.add('noodle-active');
+            bar.style.width = '10%';
+
+            addLog('FastPass', 'text-amber-400', 'Compilando 3 keyframes + prompt 90s Anime em GIF leve...');
+
+            setTimeout(() => { bar.style.width = '55%'; }, 350);
+            setTimeout(() => { bar.style.width = '90%'; }, 750);
+            setTimeout(() => {
+                bar.style.width = '100%';
+                overlay.classList.add('hidden');
+                noodle1.classList.remove('noodle-active');
+                noodle2.classList.remove('noodle-active');
+                animProgress = 0;
+                isPlaying = true;
+                document.getElementById('icon-play-pause').className = 'fa-solid fa-pause';
+                addLog('FastPass', 'text-emerald-400', 'GIF Animatic atualizado (480p / 12fps). Pronto para revisão.');
+                showToast('GIF Animatic gerado com sucesso! (Fast Pass)', 'fa-solid fa-film text-amber-400');
+            }, 1150);
+        }
+
+        // Toggle Approval Gatekeeper -> Unlocks Heavy Video Engine
+        function toggleApproveAnimatic() {
+            isApproved = !isApproved;
+
+            const btnApprove = document.getElementById('btn-approve-gif');
+            const approveText = document.getElementById('approve-text');
+            const approveIcon = document.getElementById('approve-icon');
+            const heavyNode = document.getElementById('heavy-node');
+            const heavyLockBadge = document.getElementById('heavy-lock-badge');
+            const heavyStatusDot = document.getElementById('heavy-status-dot');
+            const btnNodeHeavy = document.getElementById('btn-node-heavy');
+            const btnTopHeavy = document.getElementById('btn-top-heavy');
+            const topLockIcon = document.getElementById('top-lock-icon');
+            const noodle4 = document.getElementById('noodle-4');
+            const socketGifOut = document.getElementById('socket-gif-out');
+            const socketHeavyIn = document.getElementById('socket-heavy-in');
+
+            if (isApproved) {
+                btnApprove.className = "w-full py-2 px-3 rounded-lg font-bold text-xs flex items-center justify-center gap-2 transition cursor-pointer bg-emerald-500 text-slate-950 shadow-lg shadow-emerald-500/25";
+                approveIcon.className = "fa-solid fa-circle-check";
+                approveText.textContent = "ANIMATIC APROVADO — ENGINE PESADA ATIVA";
+
+                // Unlock Heavy Node
+                heavyNode.classList.remove('opacity-55');
+                heavyNode.classList.add('border-rose-500/50', 'shadow-[0_0_35px_rgba(244,63,94,0.12)]');
+                heavyLockBadge.innerHTML = '<i class="fa-solid fa-unlock mr-1"></i>UNLOCKED';
+                heavyLockBadge.className = 'text-[10px] font-mono-code text-emerald-300 bg-emerald-950/90 px-2 py-0.5 rounded border border-emerald-500/40';
+                heavyStatusDot.className = 'w-2.5 h-2.5 rounded-full bg-rose-500 animate-ping';
+
+                // Activate Noodles & Sockets
+                noodle4.setAttribute('stroke', '#10b981');
+                noodle4.classList.add('noodle-active');
+                socketGifOut.className = 'socket bg-emerald-400 text-emerald-400';
+                socketHeavyIn.className = 'socket bg-emerald-400 text-emerald-400';
+
+                // Enable Heavy Render Buttons
+                btnNodeHeavy.disabled = false;
+                btnNodeHeavy.className = "w-full py-2.5 px-4 rounded-lg font-bold text-xs tracking-wide flex items-center justify-center gap-2 transition cursor-pointer bg-gradient-to-r from-rose-600 to-orange-600 hover:from-rose-500 hover:to-orange-500 text-white shadow-lg shadow-rose-600/25";
+
+                btnTopHeavy.disabled = false;
+                btnTopHeavy.className = "flex items-center gap-2 bg-rose-600 hover:bg-rose-500 text-white font-semibold text-xs px-3.5 py-2 rounded-lg shadow-lg shadow-rose-600/25 transition cursor-pointer";
+                topLockIcon.className = "fa-solid fa-fire";
+
+                document.getElementById('pipeline-mode').textContent = 'HEAVY RENDER ARMED';
+                document.getElementById('pipeline-mode').className = 'text-rose-400';
+
+                addLog('Approval', 'text-emerald-400', 'Animatic GIF aprovado pelo diretor! Desbloqueando pipeline 4K.');
+                showToast('Pipeline Pesada 4K desbloqueada!', 'fa-solid fa-unlock text-emerald-400');
+            } else {
+                btnApprove.className = "w-full py-2 px-3 rounded-lg font-bold text-xs flex items-center justify-center gap-2 transition cursor-pointer bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/50";
+                approveIcon.className = "fa-regular fa-square-check";
+                approveText.textContent = "APROVAR ANIMATIC & LIBERAR RENDER PESADO";
+
+                heavyNode.classList.add('opacity-55');
+                heavyNode.classList.remove('border-rose-500/50', 'shadow-[0_0_35px_rgba(244,63,94,0.12)]');
+                heavyLockBadge.innerHTML = '<i class="fa-solid fa-lock mr-1"></i>LOCKED';
+                heavyLockBadge.className = 'text-[10px] font-mono-code text-rose-300 bg-rose-950/90 px-2 py-0.5 rounded border border-rose-500/40';
+                heavyStatusDot.className = 'w-2.5 h-2.5 rounded-full bg-slate-500';
+
+                noodle4.setAttribute('stroke', '#475569');
+                noodle4.classList.remove('noodle-active');
+                socketGifOut.className = 'socket bg-slate-500 text-slate-500';
+                socketHeavyIn.className = 'socket bg-slate-500 text-slate-500';
+
+                btnNodeHeavy.disabled = true;
+                btnNodeHeavy.className = "w-full py-2.5 px-4 rounded-lg font-bold text-xs tracking-wide flex items-center justify-center gap-2 transition bg-[#24242e] text-slate-500 border border-[#323240] cursor-not-allowed";
+
+                btnTopHeavy.disabled = true;
+                btnTopHeavy.className = "flex items-center gap-2 bg-[#262630] text-slate-500 border border-[#343442] font-semibold text-xs px-3.5 py-2 rounded-lg transition cursor-not-allowed";
+                topLockIcon.className = "fa-solid fa-lock";
+
+                document.getElementById('pipeline-mode').textContent = 'FAST GIF PROXY';
+                document.getElementById('pipeline-mode').className = 'text-amber-300';
+
+                addLog('Guard', 'text-slate-400', 'Aprovação revogada. Engine pesada bloqueada novamente.');
+            }
+        }
+
+        // Simulate Heavy Final Video Render
+        function triggerHeavyRender() {
+            if (!isApproved) return;
+            const progBox = document.getElementById('heavy-progress-box');
+            const progBar = document.getElementById('heavy-progress-bar');
+            const progLabel = document.getElementById('heavy-stage-label');
+            const progPercent = document.getElementById('heavy-percent');
+            const vramMeter = document.getElementById('vram-meter');
+
+            progBox.classList.remove('hidden');
+            vramMeter.textContent = '21.8 / 24.0 GB';
+            vramMeter.className = 'text-rose-400';
+
+            const steps = [
+                { pct: 18, label: 'AnimateDiff Temporal Pass...', log: 'Executando difusão temporal nos 3 keyframes aprovados...' },
+                { pct: 48, label: 'RIFE 60fps Frame Interpolation...', log: 'Interpolando quadros intermediários (12fps → 60fps)...' },
+                { pct: 79, label: 'RealESRGAN Anime 4x Upscale...', log: 'Aplicando upscale 4K + granulação de película 1995...' },
+                { pct: 100, label: 'Muxing Audio & Export MP4...', log: 'Render finalizado! Arquivo salvo: SuiteMakeAnime_Seq01_4K.mp4' }
+            ];
+
+            let i = 0;
+            addLog('HeavyGPU', 'text-rose-400', 'Alocando 21.8GB VRAM para renderização final 4K...');
+
+            const interval = setInterval(() => {
+                if (i < steps.length) {
+                    progBar.style.width = steps[i].pct + '%';
+                    progLabel.textContent = steps[i].label;
+                    progPercent.textContent = steps[i].pct + '%';
+                    addLog('HeavyGPU', i === 3 ? 'text-emerald-400' : 'text-rose-300', steps[i].log);
+                    i++;
+                } else {
+                    clearInterval(interval);
+                    vramMeter.textContent = '4.1 / 24.0 GB';
+                    vramMeter.className = 'text-emerald-400';
+                    showToast('Vídeo Final 4K (.MP4) exportado com sucesso!', 'fa-solid fa-clapperboard text-emerald-400');
+                }
+            }, 950);
+        }
+
+        // Add a new Keyframe slot dynamically
+        function addMockKeyframe() {
+            keyframeCount++;
+            const container = document.getElementById('keyframes-container');
+            const lastBtnRow = container.lastElementChild;
+
+            const card = document.createElement('div');
+            card.className = 'bg-[#131318] border border-sky-500/40 rounded-lg p-2.5 space-y-2 animate-fade-in';
+            card.innerHTML = `
+                <div class="flex items-center justify-between">
+                    <span class="text-[11px] font-mono-code font-bold text-sky-400">KEYFRAME #0${keyframeCount} • NOVO SLOT</span>
+                    <input type="text" value="1.5s" class="w-11 bg-[#1e1e26] border border-[#343442] rounded px-1.5 py-0.5 text-[11px] font-mono-code text-center text-sky-300">
+                </div>
+                <textarea rows="2" class="w-full bg-[#1a1a21] border border-[#2f2f3c] focus:border-sky-500 focus:outline-none rounded-md p-2 text-xs text-slate-200 leading-snug resize-none" placeholder="Descreva a ação deste novo keyframe..."></textarea>
+            `;
+            container.insertBefore(card, lastBtnRow);
+            addLog('SeqNode', 'text-sky-400', `Keyframe #0${keyframeCount} adicionado à fila do Animatic.`);
+        }
+    </script>
+</body>
+</html>
